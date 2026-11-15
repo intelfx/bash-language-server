@@ -143,23 +143,29 @@ function getSourcedPathInfoFromNode({
       commandNameNode.type === 'command_name' &&
       sourcingCommands.includes(commandNameNode.text)
     ) {
+      // As in ShellCheck, a directive also applies to commands nested in the
+      // command after it, and the innermost directive takes precedence.
       // && and || wrap the command in (potentially nested) lists. A directive
-      // before the list still belongs to its first command.
-      let directiveTarget = node
-      while (
-        directiveTarget.parent?.type === 'list' &&
-        directiveTarget.parent.firstNamedChild?.id === directiveTarget.id
+      // before the list only belongs to its first command.
+      const directives: ReturnType<typeof parseShellCheckDirective> = []
+      for (
+        let target: SyntaxNode | null = node;
+        target && target.type !== 'program';
+        target = target.parent
       ) {
-        directiveTarget = directiveTarget.parent
+        const previous = target.previousSibling
+        if (previous?.type === 'comment' && previous.text.includes('shellcheck')) {
+          directives.push(...parseShellCheckDirective(previous.text))
+        }
+        if (
+          target.parent?.type === 'list' &&
+          target.parent.firstNamedChild?.id !== target.id
+        ) {
+          break
+        }
       }
 
-      const previousCommentNode =
-        directiveTarget.previousSibling?.type === 'comment'
-          ? directiveTarget.previousSibling
-          : null
-
-      if (previousCommentNode?.text.includes('shellcheck')) {
-        const directives = parseShellCheckDirective(previousCommentNode.text)
+      if (directives.length > 0) {
         const sourcedPath = directives.find(discriminate('type', 'source'))?.path
 
         if (sourcedPath === '/dev/null') {

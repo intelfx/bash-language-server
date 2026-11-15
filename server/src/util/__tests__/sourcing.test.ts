@@ -330,6 +330,47 @@ describe('getSourcedUris', () => {
     ])
   })
 
+  it('applies a source directive before an enclosing command', () => {
+    vi.restoreAllMocks()
+
+    const sourceCommands = getSourceCommands({
+      fileUri,
+      rootPath: REPO_ROOT_FOLDER,
+      tree: parser.parse(`
+        # shellcheck source=./testing/fixtures/issue206.sh
+        for f in "$dir"/*.sh; do
+          if [[ -x $f ]]; then
+            source "$f" || exit
+          fi
+        done
+      `)!,
+    })
+
+    expect(sourceCommands.map(({ uri, error }) => ({ uri, error }))).toEqual([
+      { uri: `file://${FIXTURE_FOLDER}issue206.sh`, error: null },
+    ])
+  })
+
+  it('prefers the innermost source directive', () => {
+    vi.restoreAllMocks()
+
+    const sourceCommands = getSourceCommands({
+      fileUri,
+      rootPath: REPO_ROOT_FOLDER,
+      tree: parser.parse(`
+        # shellcheck source=./testing/fixtures/issue206.sh
+        {
+          # shellcheck source=./testing/fixtures/install.sh
+          source "$X"
+        }
+      `)!,
+    })
+
+    expect(sourceCommands.map(({ uri }) => uri)).toEqual([
+      `file://${FIXTURE_FOLDER}install.sh`,
+    ])
+  })
+
   it('resolves bats `load` commands in .bats files', () => {
     vi.restoreAllMocks()
 
