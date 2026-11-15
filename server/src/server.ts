@@ -326,6 +326,8 @@ export default class BashServer {
             this.config.includeAllWorkspaceSymbols,
           )
 
+          this.analyzer.setShellCheckArguments(this.config.shellcheckArguments)
+
           if (!isDefaultConfig) {
             // We skip setting the log level as the default configuration should
             // not override the environment defined log level.

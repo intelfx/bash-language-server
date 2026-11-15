@@ -433,6 +433,48 @@ source "$dir/install.sh"
     ])
   })
 
+  it('applies directives from the ShellCheck rc file', () => {
+    vi.restoreAllMocks()
+
+    const sourceCommands = getSourceCommands({
+      fileUri: `file://${FIXTURE_FOLDER}bats/script.sh`,
+      rootPath: null,
+      tree: parser.parse('source install.sh\n')!,
+      rcDirectives: [
+        { type: 'assume-sourced', path: 'SCRIPTDIR/../issue206.sh' },
+        { type: 'source-path', path: 'SCRIPTDIR/..' },
+      ],
+    })
+
+    expect(
+      sourceCommands.map(({ uri, error, range }) => ({
+        uri,
+        error,
+        line: range.start.line,
+      })),
+    ).toEqual([
+      { uri: `file://${FIXTURE_FOLDER}issue206.sh`, error: null, line: 0 },
+      { uri: `file://${FIXTURE_FOLDER}install.sh`, error: null, line: 0 },
+    ])
+  })
+
+  it('prefers file-wide directives over the ShellCheck rc file', () => {
+    vi.restoreAllMocks()
+
+    const sourceCommands = getSourceCommands({
+      fileUri,
+      rootPath: REPO_ROOT_FOLDER,
+      tree: parser.parse(
+        '# shellcheck source=./testing/fixtures/issue206.sh\nsource "$X"\n',
+      )!,
+      rcDirectives: [{ type: 'source', path: './testing/fixtures/install.sh' }],
+    })
+
+    expect(sourceCommands.map(({ uri }) => uri)).toEqual([
+      `file://${FIXTURE_FOLDER}issue206.sh`,
+    ])
+  })
+
   it('resolves bats `load` commands in .bats files', () => {
     vi.restoreAllMocks()
 

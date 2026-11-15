@@ -38,10 +38,12 @@ export function getSourceCommands({
   fileUri,
   rootPath,
   tree,
+  rcDirectives = [],
 }: {
   fileUri: string
   rootPath: string | null
   tree: Tree
+  rcDirectives?: Directive[]
 }): SourceCommand[] {
   const sourceCommands: SourceCommand[] = []
 
@@ -101,7 +103,8 @@ export function getSourceCommands({
     })
   }
 
-  // As in ShellCheck, directives before the first command apply to the whole file
+  // As in ShellCheck, directives before the first command apply to the whole
+  // file, followed by the directives from the rc file
   const headerComments: SyntaxNode[] = []
   for (const node of tree.rootNode.namedChildren) {
     if (node?.type !== 'comment') {
@@ -109,23 +112,29 @@ export function getSourceCommands({
     }
     headerComments.push(node)
   }
-  const fileWideDirectives = headerComments.flatMap((node) =>
-    parseShellCheckDirective(node.text),
-  )
+  const fileWideDirectives = [
+    ...headerComments.flatMap((node) => parseShellCheckDirective(node.text)),
+    ...rcDirectives,
+  ]
   const fileWideSourcePaths = getSourcePaths(fileWideDirectives, scriptDirectory)
 
-  // File-wide assume-sourced directives, treated as if sourced at the top
-  for (const node of headerComments) {
-    for (const directive of parseShellCheckDirective(node.text)) {
+  const addAssumedSources = (range: LSP.Range, directives: Directive[]) => {
+    for (const directive of directives) {
       if (directive.type === 'assume-sourced') {
-        addSourceCommands(
-          TreeSitterUtil.range(node),
-          expandScriptDirectory(directive.path, scriptDirectory),
-          { allowGlob: true, sourcePaths: fileWideSourcePaths },
-        )
+        addSourceCommands(range, expandScriptDirectory(directive.path, scriptDirectory), {
+          allowGlob: true,
+          sourcePaths: fileWideSourcePaths,
+        })
       }
     }
   }
+
+  // File-wide assume-sourced directives, treated as if sourced at the top
+  for (const node of headerComments) {
+    addAssumedSources(TreeSitterUtil.range(node), parseShellCheckDirective(node.text))
+  }
+  // The rc file has no location in the document, so use the start of the file
+  addAssumedSources(LSP.Range.create(0, 0, 0, 0), rcDirectives)
 
   TreeSitterUtil.forEach(tree.rootNode, (node) => {
     const sourcedPathInfo = getSourcedPathInfoFromNode({

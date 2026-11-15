@@ -1,5 +1,6 @@
 import * as fs from 'fs'
 import FuzzySearch from 'fuzzy-search'
+import * as path from 'path'
 import * as url from 'url'
 import { isDeepStrictEqual } from 'util'
 import * as LSP from 'vscode-languageserver/node'
@@ -7,6 +8,7 @@ import { TextDocument } from 'vscode-languageserver-textdocument'
 import { Node as SyntaxNode, Parser, Point, Tree } from 'web-tree-sitter'
 
 import { getDefaultConfiguration } from './config'
+import { getShellCheckRcDirectives } from './shellcheck/rc'
 import { flattenArray } from './util/array'
 import {
   FindDeclarationParams,
@@ -45,6 +47,7 @@ export default class Analyzer {
   private enableSourceErrorDiagnostics: boolean
   private includeAllWorkspaceSymbols: boolean
   private parser: Parser
+  private shellcheckArguments: string[] = []
   private uriToAnalyzedDocument: Record<string, AnalyzedDocument | undefined> = {}
   private workspaceFolder: string | null
 
@@ -97,6 +100,12 @@ export default class Analyzer {
         fileUri: uri,
         rootPath: this.workspaceFolder,
         tree,
+        rcDirectives: uri.startsWith('file://')
+          ? getShellCheckRcDirectives(
+              path.dirname(url.fileURLToPath(uri)),
+              this.shellcheckArguments,
+            )
+          : [],
       })
     } catch (error) {
       tree.delete()
@@ -957,6 +966,11 @@ export default class Analyzer {
 
   public setIncludeAllWorkspaceSymbols(includeAllWorkspaceSymbols: boolean): void {
     this.includeAllWorkspaceSymbols = includeAllWorkspaceSymbols
+  }
+
+  /** Sets the ShellCheck arguments, which may select or disable the rc file. */
+  public setShellCheckArguments(shellcheckArguments: string[]): void {
+    this.shellcheckArguments = shellcheckArguments
   }
 
   /**

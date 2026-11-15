@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 import { pathToFileURL } from 'node:url'
 
+import * as fs from 'fs'
+import * as os from 'os'
+import * as path from 'path'
+
 import { Parser } from 'web-tree-sitter'
 import { TextDocument } from 'vscode-languageserver-textdocument'
 
@@ -452,6 +456,31 @@ describe('findAllSourcedUris', () => {
         `file://${FIXTURE_FOLDER}extension.inc`, // resolved based on current file
       ]),
     )
+  })
+
+  it('follows assume-sourced directives from the ShellCheck rc file', async () => {
+    const rootPath = fs.mkdtempSync(path.join(os.tmpdir(), 'bash-language-server-rc-'))
+    try {
+      fs.writeFileSync(
+        path.join(rootPath, '.shellcheckrc'),
+        'assume-sourced=SCRIPTDIR/lib.sh\n',
+      )
+      fs.writeFileSync(path.join(rootPath, 'lib.sh'), '')
+      const uri = pathToFileURL(path.join(rootPath, 'member.sh')).href
+      const document = TextDocument.create(uri, 'shellscript', 0, 'echo\n')
+      const analyzer = await getAnalyzer({ workspaceFolder: rootPath })
+
+      analyzer.analyze({ uri, document })
+      expect(analyzer.findAllSourcedUris({ uri })).toEqual(
+        new Set([pathToFileURL(path.join(rootPath, 'lib.sh')).href]),
+      )
+
+      analyzer.setShellCheckArguments(['--norc'])
+      analyzer.analyze({ uri, document })
+      expect(analyzer.findAllSourcedUris({ uri })).toEqual(new Set())
+    } finally {
+      fs.rmSync(rootPath, { recursive: true, force: true })
+    }
   })
 
   it('returns references to sourced files without file extension', async () => {
