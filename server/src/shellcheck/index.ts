@@ -1,4 +1,5 @@
-import { dirname } from 'node:path'
+import { existsSync } from 'node:fs'
+import { dirname, isAbsolute, resolve } from 'node:path'
 import { fileURLToPath, URL } from 'node:url'
 
 import { spawn } from 'child_process'
@@ -193,16 +194,26 @@ export class Linter {
       return { diagnostics: [], codeActions: {} }
     }
 
+    // ShellCheck reads the document from stdin, so it resolves SCRIPTDIR and
+    // looks for .shellcheckrc relative to its working directory. Run it from
+    // the document's directory, and keep paths relative to the configured
+    // working directory resolvable by passing that as a source path.
     const documentPath = safeFileURLToPath(document.uri)
-    const effectiveSourcePaths = documentPath
-      ? [...sourcePaths, dirname(documentPath)]
-      : sourcePaths
+    const documentDirectory = documentPath ? dirname(documentPath) : null
+    const cwd =
+      documentDirectory && existsSync(documentDirectory) ? documentDirectory : this.cwd
+    const effectiveSourcePaths = [
+      ...sourcePaths.map((sourcePath) => this.resolveSourcePath(sourcePath)),
+      ...(documentDirectory ? [documentDirectory] : []),
+      this.cwd,
+    ]
 
     const result = await this.runShellCheck(
       signal,
       documentText,
       shellName,
       effectiveSourcePaths,
+      cwd,
       additionalShellCheckArguments,
     )
 
@@ -213,11 +224,25 @@ export class Linter {
     return mapShellCheckResult({ uri: document.uri, result })
   }
 
+  private resolveSourcePath(sourcePath: string): string {
+    const trimmed = sourcePath.trim()
+    // Leave empty paths for runShellCheck to drop, and keep ShellCheck's special paths
+    if (
+      !trimmed ||
+      isAbsolute(trimmed) ||
+      /^(SCRIPTDIR|TOPLEVELDIR)(\/|$)/.test(trimmed)
+    ) {
+      return sourcePath
+    }
+    return resolve(this.cwd, trimmed)
+  }
+
   private async runShellCheck(
     signal: AbortSignal,
     documentText: string,
     shellName: string | null,
     sourcePaths: string[],
+    cwd: string,
     additionalArgs: string[] = [],
   ): Promise<ShellCheckResult> {
     const sourcePathsArgs = sourcePaths
@@ -248,7 +273,7 @@ export class Linter {
       // The abort listener below owns termination. Passing signal here as well
       // would race Node's direct-child kill against process-group cleanup.
       const proc = spawn(this.executablePath, [...args, '-'], {
-        cwd: this.cwd,
+        cwd,
         detached: useProcessGroup,
       })
       let processError: Error | undefined

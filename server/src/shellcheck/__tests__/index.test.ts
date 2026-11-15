@@ -297,6 +297,32 @@ describe('linter', () => {
     })
   })
 
+  it('should resolve SCRIPTDIR relative to the document', async () => {
+    const document = TextDocument.create(
+      `file://${FIXTURE_FOLDER}shellcheck/scriptdir.sh`,
+      'bash',
+      0,
+      '#!/bin/bash\n# shellcheck source=SCRIPTDIR/sourced.sh\nsource "$x"\necho "$foo"\n',
+    )
+    const [result] = await getLintingResult({
+      cwd: path.resolve(path.join(FIXTURE_FOLDER, '../')),
+      document,
+    })
+    expect(result?.diagnostics.map(({ code }) => code)).toEqual(['SC2154'])
+  })
+
+  it('should resolve relative source paths against the configured cwd', async () => {
+    const [result] = await getLintingResult({
+      cwd: path.resolve(path.join(FIXTURE_FOLDER, '../')),
+      document: FIXTURE_DOCUMENT.SHELLCHECK_SOURCE,
+      sourcePaths: ['fixtures'],
+    })
+    expect(result).toEqual({
+      codeActions: {},
+      diagnostics: [],
+    })
+  })
+
   it('should handle non-file URI schemes gracefully', async () => {
     const shell = ['#!/bin/bash', 'echo "hello"'].join('\n')
 
