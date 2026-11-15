@@ -6,7 +6,7 @@ import * as path from 'path'
 import * as LSP from 'vscode-languageserver'
 import { Node as SyntaxNode, Tree } from 'web-tree-sitter'
 
-import { parseShellCheckDirective } from '../shellcheck/directive'
+import { Directive, parseShellCheckDirective } from '../shellcheck/directive'
 import { discriminate } from './discriminate'
 import { untildify } from './fs'
 import * as TreeSitterUtil from './tree-sitter'
@@ -159,7 +159,7 @@ function getSourcedPathInfoFromNode({
   node: SyntaxNode
   isBatsFile: boolean
   scriptDirectory: string
-  fileWideDirectives: ReturnType<typeof parseShellCheckDirective>
+  fileWideDirectives: Directive[]
 }): null | {
   sourcedPath?: string
   parseError?: string
@@ -185,7 +185,7 @@ function getSourcedPathInfoFromNode({
       // command after it, and the innermost directive takes precedence.
       // && and || wrap the command in (potentially nested) lists. A directive
       // before the list only belongs to its first command.
-      const directives: ReturnType<typeof parseShellCheckDirective> = []
+      const directives: Directive[] = []
       for (
         let target: SyntaxNode | null = node;
         target && target.type !== 'program';
@@ -281,10 +281,7 @@ function getSourcedPathInfoFromNode({
 /**
  * Returns the directories from the given source-path directives.
  */
-function getSourcePaths(
-  directives: ReturnType<typeof parseShellCheckDirective>,
-  scriptDirectory: string,
-): string[] {
+function getSourcePaths(directives: Directive[], scriptDirectory: string): string[] {
   return directives
     .filter(discriminate('type', 'source-path'))
     .map((directive) => expandScriptDirectory(directive.path, scriptDirectory))

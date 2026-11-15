@@ -8,7 +8,7 @@ const DIRECTIVE_TYPES = [
 ] as const
 type DirectiveType = (typeof DIRECTIVE_TYPES)[number]
 
-type Directive =
+export type Directive =
   | {
       type: 'enable'
       rules: string[]
@@ -43,7 +43,12 @@ export function parseShellCheckDirective(line: string): Directive[] {
     return []
   }
 
-  const commands = match[2]
+  return parseShellCheckDirectiveCommands(match[2])
+}
+
+/** Parses directives without the comment prefix, as in a ShellCheck rc file. */
+export function parseShellCheckDirectiveCommands(text: string): Directive[] {
+  const commands = text
     .split(' ')
     .map((command) => command.trim())
     .filter((command) => command !== '')
