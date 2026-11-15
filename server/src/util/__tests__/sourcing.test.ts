@@ -477,6 +477,39 @@ describe('getSourcedUris', () => {
       ])
     })
 
+    it('includes files from file-wide assume-sourced directives', () => {
+      vi.restoreAllMocks()
+
+      const sourceCommands = getSourceCommands({
+        fileUri: pathToFileURL(path.join(rootPath, 'main.sh')).href,
+        rootPath: null,
+        tree: parser.parse(
+          [
+            '#!/bin/bash',
+            '# Some description',
+            '# shellcheck assume-sourced=SCRIPTDIR/lib.d/a.sh',
+            '# shellcheck assume-sourced=SCRIPTDIR/lib.d/*.sh',
+            '',
+            'echo',
+            '# shellcheck assume-sourced=SCRIPTDIR/lib.d/b.sh',
+            'echo',
+          ].join('\n'),
+        )!,
+      })
+
+      expect(
+        sourceCommands.map(({ uri, error, range }) => ({
+          uri,
+          error,
+          line: range.start.line,
+        })),
+      ).toEqual([
+        { uri: libUri('a.sh'), error: null, line: 2 },
+        { uri: libUri('a.sh'), error: null, line: 3 },
+        { uri: libUri('b.sh'), error: null, line: 3 },
+      ])
+    })
+
     it('does not expand a glob in the source command itself', () => {
       vi.restoreAllMocks()
 

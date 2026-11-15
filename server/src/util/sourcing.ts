@@ -51,39 +51,65 @@ export function getSourceCommands({
     : rootPath
   const rootPaths = [path.dirname(filePath), workspacePath].filter(Boolean) as string[]
   const isBatsFile = fileUri.endsWith('.bats')
+  const scriptDirectory = path.dirname(filePath)
+
+  const addSourceCommands = (
+    range: LSP.Range,
+    sourcedPath: string | undefined,
+    { allowGlob, parseError }: { allowGlob: boolean; parseError?: string },
+  ) => {
+    // Like ShellCheck, only expand globs from directives: the shell would
+    // source just the first match of a glob in the command itself
+    if (sourcedPath && allowGlob && isGlob(sourcedPath)) {
+      const uris = resolveSourcedGlob({ rootPaths, pattern: sourcedPath, filePath })
+      if (uris.length === 0) {
+        sourceCommands.push({ range, uri: null, error: 'no files match glob' })
+      }
+      for (const uri of uris) {
+        sourceCommands.push({ range, uri, error: null })
+      }
+      return
+    }
+
+    const uri = sourcedPath
+      ? resolveSourcedUri({ rootPaths, sourcedPath, isBatsFile })
+      : null
+
+    sourceCommands.push({
+      range,
+      uri,
+      error: uri ? null : parseError || 'failed to resolve path',
+    })
+  }
+
+  // File-wide assume-sourced directives, treated as if sourced at the top
+  for (const node of tree.rootNode.namedChildren) {
+    if (node?.type !== 'comment') {
+      break
+    }
+    for (const directive of parseShellCheckDirective(node.text)) {
+      if (directive.type === 'assume-sourced') {
+        addSourceCommands(
+          TreeSitterUtil.range(node),
+          expandScriptDirectory(directive.path, scriptDirectory),
+          { allowGlob: true },
+        )
+      }
+    }
+  }
 
   TreeSitterUtil.forEach(tree.rootNode, (node) => {
     const sourcedPathInfo = getSourcedPathInfoFromNode({
       node,
       isBatsFile,
-      scriptDirectory: path.dirname(filePath),
+      scriptDirectory,
     })
 
     if (sourcedPathInfo) {
       const { sourcedPath, parseError, isDirective } = sourcedPathInfo
-      const range = TreeSitterUtil.range(node)
-
-      // Like ShellCheck, only expand globs from directives: the shell would
-      // source just the first match of a glob in the command itself
-      if (sourcedPath && isDirective && isGlob(sourcedPath)) {
-        const uris = resolveSourcedGlob({ rootPaths, pattern: sourcedPath, filePath })
-        if (uris.length === 0) {
-          sourceCommands.push({ range, uri: null, error: 'no files match glob' })
-        }
-        for (const uri of uris) {
-          sourceCommands.push({ range, uri, error: null })
-        }
-        return true
-      }
-
-      const uri = sourcedPath
-        ? resolveSourcedUri({ rootPaths, sourcedPath, isBatsFile })
-        : null
-
-      sourceCommands.push({
-        range,
-        uri,
-        error: uri ? null : parseError || 'failed to resolve path',
+      addSourceCommands(TreeSitterUtil.range(node), sourcedPath, {
+        allowGlob: !!isDirective,
+        parseError,
       })
     }
 

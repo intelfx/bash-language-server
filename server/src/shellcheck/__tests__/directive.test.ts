@@ -174,6 +174,17 @@ describe('parseShellCheckDirective', () => {
     ])
   })
 
+  it('parses assume-sourced directive', () => {
+    expect(
+      parseShellCheckDirective('# shellcheck assume-sourced=SCRIPTDIR/lib.d/*.sh'),
+    ).toEqual([
+      {
+        type: 'assume-sourced',
+        path: 'SCRIPTDIR/lib.d/*.sh',
+      },
+    ])
+  })
+
   it('supports multiple directives on the same line', () => {
     expect(
       parseShellCheckDirective(
