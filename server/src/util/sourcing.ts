@@ -56,12 +56,31 @@ export function getSourceCommands({
   const addSourceCommands = (
     range: LSP.Range,
     sourcedPath: string | undefined,
-    { allowGlob, parseError }: { allowGlob: boolean; parseError?: string },
+    {
+      allowGlob,
+      parseError,
+      sourcePaths = [],
+    }: { allowGlob: boolean; parseError?: string; sourcePaths?: string[] },
   ) => {
+    // As in ShellCheck, source paths are searched after the default locations.
+    // Relative source paths are relative to the default locations.
+    const searchPaths = [
+      ...rootPaths,
+      ...sourcePaths.flatMap((sourcePath) =>
+        path.isAbsolute(sourcePath)
+          ? [sourcePath]
+          : rootPaths.map((rootPath) => path.join(rootPath, sourcePath)),
+      ),
+    ]
+
     // Like ShellCheck, only expand globs from directives: the shell would
     // source just the first match of a glob in the command itself
     if (sourcedPath && allowGlob && isGlob(sourcedPath)) {
-      const uris = resolveSourcedGlob({ rootPaths, pattern: sourcedPath, filePath })
+      const uris = resolveSourcedGlob({
+        rootPaths: searchPaths,
+        pattern: sourcedPath,
+        filePath,
+      })
       if (uris.length === 0) {
         sourceCommands.push({ range, uri: null, error: 'no files match glob' })
       }
@@ -72,7 +91,7 @@ export function getSourceCommands({
     }
 
     const uri = sourcedPath
-      ? resolveSourcedUri({ rootPaths, sourcedPath, isBatsFile })
+      ? resolveSourcedUri({ rootPaths: searchPaths, sourcedPath, isBatsFile })
       : null
 
     sourceCommands.push({
@@ -93,6 +112,7 @@ export function getSourceCommands({
   const fileWideDirectives = headerComments.flatMap((node) =>
     parseShellCheckDirective(node.text),
   )
+  const fileWideSourcePaths = getSourcePaths(fileWideDirectives, scriptDirectory)
 
   // File-wide assume-sourced directives, treated as if sourced at the top
   for (const node of headerComments) {
@@ -101,7 +121,7 @@ export function getSourceCommands({
         addSourceCommands(
           TreeSitterUtil.range(node),
           expandScriptDirectory(directive.path, scriptDirectory),
-          { allowGlob: true },
+          { allowGlob: true, sourcePaths: fileWideSourcePaths },
         )
       }
     }
@@ -116,10 +136,11 @@ export function getSourceCommands({
     })
 
     if (sourcedPathInfo) {
-      const { sourcedPath, parseError, isDirective } = sourcedPathInfo
+      const { sourcedPath, parseError, isDirective, sourcePaths } = sourcedPathInfo
       addSourceCommands(TreeSitterUtil.range(node), sourcedPath, {
         allowGlob: !!isDirective,
         parseError,
+        sourcePaths,
       })
     }
 
@@ -139,7 +160,12 @@ function getSourcedPathInfoFromNode({
   isBatsFile: boolean
   scriptDirectory: string
   fileWideDirectives: ReturnType<typeof parseShellCheckDirective>
-}): null | { sourcedPath?: string; parseError?: string; isDirective?: boolean } {
+}): null | {
+  sourcedPath?: string
+  parseError?: string
+  isDirective?: boolean
+  sourcePaths?: string[]
+} {
   const sourcingCommands = isBatsFile
     ? [...SOURCING_COMMANDS, ...BATS_SOURCING_COMMANDS]
     : SOURCING_COMMANDS
@@ -177,6 +203,7 @@ function getSourcedPathInfoFromNode({
         }
       }
       directives.push(...fileWideDirectives)
+      const sourcePaths = getSourcePaths(directives, scriptDirectory)
 
       if (directives.length > 0) {
         const sourcedPath = directives.find(discriminate('type', 'source'))?.path
@@ -189,6 +216,7 @@ function getSourcedPathInfoFromNode({
           return {
             sourcedPath: expandScriptDirectory(sourcedPath, scriptDirectory),
             isDirective: true,
+            sourcePaths,
           }
         }
 
@@ -200,27 +228,13 @@ function getSourcedPathInfoFromNode({
         if (isNotFollowErrorDisabled) {
           return null
         }
-
-        // The script directory alone is already searched by default
-        const rootFolder = directives.find(discriminate('type', 'source-path'))?.path
-        if (
-          rootFolder &&
-          !SCRIPT_DIRECTORY_PATHS.includes(rootFolder) &&
-          argumentNode.type === 'word'
-        ) {
-          return {
-            sourcedPath: path.join(
-              expandScriptDirectory(rootFolder, scriptDirectory),
-              argumentNode.text,
-            ),
-          }
-        }
       }
 
       const strValue = TreeSitterUtil.resolveStaticString(argumentNode)
       if (strValue !== null) {
         return {
           sourcedPath: strValue,
+          sourcePaths,
         }
       }
 
@@ -236,6 +250,7 @@ function getSourcedPathInfoFromNode({
           if (stringContents.startsWith(`${variableNode.text}/`)) {
             return {
               sourcedPath: `.${stringContents.slice(variableNode.text.length)}`,
+              sourcePaths,
             }
           }
         }
@@ -247,6 +262,7 @@ function getSourcedPathInfoFromNode({
         if (sourcedPath) {
           return {
             sourcedPath,
+            sourcePaths,
           }
         }
       }
@@ -260,6 +276,18 @@ function getSourcedPathInfoFromNode({
   }
 
   return null
+}
+
+/**
+ * Returns the directories from the given source-path directives.
+ */
+function getSourcePaths(
+  directives: ReturnType<typeof parseShellCheckDirective>,
+  scriptDirectory: string,
+): string[] {
+  return directives
+    .filter(discriminate('type', 'source-path'))
+    .map((directive) => expandScriptDirectory(directive.path, scriptDirectory))
 }
 
 /**

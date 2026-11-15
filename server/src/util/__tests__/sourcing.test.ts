@@ -285,7 +285,8 @@ describe('getSourcedUris', () => {
     ['source=SCRIPTDIR/../issue206.sh', 'source "$X"'],
     ['source=TOPLEVELDIR/../issue206.sh', 'source "$X"'],
     ['source-path=SCRIPTDIR/..', 'source issue206.sh'],
-  ])('expands the script directory in %s', (directive, command) => {
+    ['source-path=SCRIPTDIR/..', 'source "$dir/issue206.sh"'],
+  ])('expands the script directory in %s before %s', (directive, command) => {
     vi.restoreAllMocks()
 
     const sourceCommands = getSourceCommands({
@@ -408,6 +409,27 @@ source "$Y"
 
     expect(sourceCommands.map(({ uri, error }) => ({ uri, error }))).toEqual([
       { uri: null, error: 'non-constant source not supported' },
+    ])
+  })
+
+  it('searches all source paths in effect', () => {
+    vi.restoreAllMocks()
+
+    const sourceCommands = getSourceCommands({
+      fileUri: `file://${FIXTURE_FOLDER}bats/script.sh`,
+      rootPath: null,
+      tree: parser.parse(`#!/bin/bash
+# shellcheck source-path=SCRIPTDIR/..
+true
+# shellcheck source-path=/nonexistent
+source issue206.sh
+source "$dir/install.sh"
+`)!,
+    })
+
+    expect(sourceCommands.map(({ uri, error }) => ({ uri, error }))).toEqual([
+      { uri: `file://${FIXTURE_FOLDER}issue206.sh`, error: null },
+      { uri: `file://${FIXTURE_FOLDER}install.sh`, error: null },
     ])
   })
 
