@@ -280,6 +280,24 @@ describe('getSourcedUris', () => {
     ])
   })
 
+  it.each([
+    ['source=SCRIPTDIR/../issue206.sh', 'source "$X"'],
+    ['source=TOPLEVELDIR/../issue206.sh', 'source "$X"'],
+    ['source-path=SCRIPTDIR/..', 'source issue206.sh'],
+  ])('expands the script directory in %s', (directive, command) => {
+    vi.restoreAllMocks()
+
+    const sourceCommands = getSourceCommands({
+      fileUri: `file://${FIXTURE_FOLDER}bats/script.sh`,
+      rootPath: null,
+      tree: parser.parse(`# shellcheck ${directive}\n${command}`)!,
+    })
+
+    expect(sourceCommands.map(({ uri, error }) => ({ uri, error }))).toEqual([
+      { uri: `file://${FIXTURE_FOLDER}issue206.sh`, error: null },
+    ])
+  })
+
   it.each(['source=/dev/null', 'disable=SC1091'])(
     'honors ShellCheck %s before a source command with error handling',
     (directive) => {

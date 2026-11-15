@@ -20,6 +20,10 @@ const SOURCING_COMMANDS = ['source', '.']
 const BATS_SOURCING_COMMANDS = ['load']
 const BATS_SOURCED_EXTENSION = '.bash'
 
+// ShellCheck's special source paths. Each file is analyzed on its own, so the
+// toplevel script is approximated by the file itself.
+const SCRIPT_DIRECTORY_PATHS = ['SCRIPTDIR', 'TOPLEVELDIR']
+
 export type SourceCommand = {
   range: LSP.Range
   uri: string | null // resolved URIs
@@ -48,7 +52,11 @@ export function getSourceCommands({
   const isBatsFile = fileUri.endsWith('.bats')
 
   TreeSitterUtil.forEach(tree.rootNode, (node) => {
-    const sourcedPathInfo = getSourcedPathInfoFromNode({ node, isBatsFile })
+    const sourcedPathInfo = getSourcedPathInfoFromNode({
+      node,
+      isBatsFile,
+      scriptDirectory: path.dirname(filePath),
+    })
 
     if (sourcedPathInfo) {
       const { sourcedPath, parseError } = sourcedPathInfo
@@ -72,9 +80,11 @@ export function getSourceCommands({
 function getSourcedPathInfoFromNode({
   node,
   isBatsFile,
+  scriptDirectory,
 }: {
   node: SyntaxNode
   isBatsFile: boolean
+  scriptDirectory: string
 }): null | { sourcedPath?: string; parseError?: string } {
   const sourcingCommands = isBatsFile
     ? [...SOURCING_COMMANDS, ...BATS_SOURCING_COMMANDS]
@@ -116,7 +126,7 @@ function getSourcedPathInfoFromNode({
 
         if (sourcedPath) {
           return {
-            sourcedPath,
+            sourcedPath: expandScriptDirectory(sourcedPath, scriptDirectory),
           }
         }
 
@@ -129,10 +139,18 @@ function getSourcedPathInfoFromNode({
           return null
         }
 
+        // The script directory alone is already searched by default
         const rootFolder = directives.find(discriminate('type', 'source-path'))?.path
-        if (rootFolder && rootFolder !== 'SCRIPTDIR' && argumentNode.type === 'word') {
+        if (
+          rootFolder &&
+          !SCRIPT_DIRECTORY_PATHS.includes(rootFolder) &&
+          argumentNode.type === 'word'
+        ) {
           return {
-            sourcedPath: path.join(rootFolder, argumentNode.text),
+            sourcedPath: path.join(
+              expandScriptDirectory(rootFolder, scriptDirectory),
+              argumentNode.text,
+            ),
           }
         }
       }
@@ -180,6 +198,17 @@ function getSourcedPathInfoFromNode({
   }
 
   return null
+}
+
+/**
+ * Replaces a leading ShellCheck script directory path (e.g. `SCRIPTDIR/../lib`)
+ * with the directory of the analyzed file.
+ */
+function expandScriptDirectory(sourcedPath: string, scriptDirectory: string): string {
+  const [first, ...rest] = sourcedPath.split('/')
+  return SCRIPT_DIRECTORY_PATHS.includes(first)
+    ? path.join(scriptDirectory, ...rest)
+    : sourcedPath
 }
 
 /**
