@@ -319,6 +319,7 @@ describe('getSourcedUris', () => {
       fileUri,
       rootPath: REPO_ROOT_FOLDER,
       tree: parser.parse(`
+        true
         # shellcheck source=./testing/fixtures/issue206.sh
         source "$X" && source ./testing/fixtures/install.sh
       `)!,
@@ -368,6 +369,45 @@ describe('getSourcedUris', () => {
 
     expect(sourceCommands.map(({ uri }) => uri)).toEqual([
       `file://${FIXTURE_FOLDER}install.sh`,
+    ])
+  })
+
+  it('applies directives before the first command to the whole file', () => {
+    vi.restoreAllMocks()
+
+    const sourceCommands = getSourceCommands({
+      fileUri,
+      rootPath: REPO_ROOT_FOLDER,
+      tree: parser.parse(`#!/bin/bash
+# shellcheck source=./testing/fixtures/issue206.sh
+source "$X"
+true
+source "$Y"
+`)!,
+    })
+
+    expect(sourceCommands.map(({ uri, error }) => ({ uri, error }))).toEqual([
+      { uri: `file://${FIXTURE_FOLDER}issue206.sh`, error: null },
+      { uri: `file://${FIXTURE_FOLDER}issue206.sh`, error: null },
+    ])
+  })
+
+  it('does not apply directives after the first command to the whole file', () => {
+    vi.restoreAllMocks()
+
+    const sourceCommands = getSourceCommands({
+      fileUri,
+      rootPath: REPO_ROOT_FOLDER,
+      tree: parser.parse(`#!/bin/bash
+true
+# shellcheck disable=SC1091
+source "$X"
+source "$Y"
+`)!,
+    })
+
+    expect(sourceCommands.map(({ uri, error }) => ({ uri, error }))).toEqual([
+      { uri: null, error: 'non-constant source not supported' },
     ])
   })
 

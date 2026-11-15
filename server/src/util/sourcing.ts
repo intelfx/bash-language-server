@@ -82,11 +82,20 @@ export function getSourceCommands({
     })
   }
 
-  // File-wide assume-sourced directives, treated as if sourced at the top
+  // As in ShellCheck, directives before the first command apply to the whole file
+  const headerComments: SyntaxNode[] = []
   for (const node of tree.rootNode.namedChildren) {
     if (node?.type !== 'comment') {
       break
     }
+    headerComments.push(node)
+  }
+  const fileWideDirectives = headerComments.flatMap((node) =>
+    parseShellCheckDirective(node.text),
+  )
+
+  // File-wide assume-sourced directives, treated as if sourced at the top
+  for (const node of headerComments) {
     for (const directive of parseShellCheckDirective(node.text)) {
       if (directive.type === 'assume-sourced') {
         addSourceCommands(
@@ -103,6 +112,7 @@ export function getSourceCommands({
       node,
       isBatsFile,
       scriptDirectory,
+      fileWideDirectives,
     })
 
     if (sourcedPathInfo) {
@@ -123,10 +133,12 @@ function getSourcedPathInfoFromNode({
   node,
   isBatsFile,
   scriptDirectory,
+  fileWideDirectives,
 }: {
   node: SyntaxNode
   isBatsFile: boolean
   scriptDirectory: string
+  fileWideDirectives: ReturnType<typeof parseShellCheckDirective>
 }): null | { sourcedPath?: string; parseError?: string; isDirective?: boolean } {
   const sourcingCommands = isBatsFile
     ? [...SOURCING_COMMANDS, ...BATS_SOURCING_COMMANDS]
@@ -164,6 +176,7 @@ function getSourcedPathInfoFromNode({
           break
         }
       }
+      directives.push(...fileWideDirectives)
 
       if (directives.length > 0) {
         const sourcedPath = directives.find(discriminate('type', 'source'))?.path
