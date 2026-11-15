@@ -9,6 +9,7 @@ import { TextDocument } from 'vscode-languageserver-textdocument'
 import { logger } from '../util/logger'
 import { analyzeFile } from '../util/shebang'
 import { CODE_TO_TAGS, LEVEL_TO_SEVERITY, SHELLCHECK_DIALECTS } from './config'
+import { getShellCheckRcDirectives } from './rc'
 import {
   ShellCheckComment,
   ShellCheckReplacement,
@@ -175,15 +176,27 @@ export class Linter {
   ): Promise<LintingResult> {
     const documentText = document.getText()
 
+    // ShellCheck reads the document from stdin, so it resolves SCRIPTDIR and
+    // looks for .shellcheckrc relative to its working directory. Run it from
+    // the document's directory.
+    const documentPath = safeFileURLToPath(document.uri)
+    const documentDirectory = documentPath ? dirname(documentPath) : null
+    const cwd =
+      documentDirectory && existsSync(documentDirectory) ? documentDirectory : this.cwd
+
     const dialect = analyzeFile(document.uri, documentText)
+    const rcShell = getShellCheckRcDirectives(cwd, additionalShellCheckArguments).some(
+      (directive) => directive.type === 'shell',
+    )
     let shellName: string | null
     // NOTE: ShellCheck performs shebang parsing and shell detection itself.
     // Do not interfere with that in any way because it is smarter than us.
     //
     // We perform tentative shell detection manually in order to fall back to
     // bash for files without a shebang or a shell type directive, so only pass
-    // an override if the file _does not_ have a shebang or a shell type directive.
-    if (dialect.shebang || dialect.directive) {
+    // an override if the file _does not_ have a shebang or a shell type directive,
+    // and the rc file does not have a shell type directive either.
+    if (dialect.shebang || dialect.directive || rcShell) {
       shellName = null
     } else if (dialect.dialect && SHELLCHECK_DIALECTS.includes(dialect.dialect)) {
       shellName = dialect.dialect
@@ -194,14 +207,8 @@ export class Linter {
       return { diagnostics: [], codeActions: {} }
     }
 
-    // ShellCheck reads the document from stdin, so it resolves SCRIPTDIR and
-    // looks for .shellcheckrc relative to its working directory. Run it from
-    // the document's directory, and keep paths relative to the configured
-    // working directory resolvable by passing that as a source path.
-    const documentPath = safeFileURLToPath(document.uri)
-    const documentDirectory = documentPath ? dirname(documentPath) : null
-    const cwd =
-      documentDirectory && existsSync(documentDirectory) ? documentDirectory : this.cwd
+    // Keep paths relative to the configured working directory resolvable by
+    // passing that as a source path.
     const effectiveSourcePaths = [
       ...sourcePaths.map((sourcePath) => this.resolveSourcePath(sourcePath)),
       ...(documentDirectory ? [documentDirectory] : []),

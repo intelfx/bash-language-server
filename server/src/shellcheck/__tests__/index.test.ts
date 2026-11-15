@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
+import * as fs from 'fs'
+import * as os from 'os'
 import * as path from 'path'
 import { TextDocument } from 'vscode-languageserver-textdocument'
 
@@ -309,6 +311,30 @@ describe('linter', () => {
       document,
     })
     expect(result?.diagnostics.map(({ code }) => code)).toEqual(['SC2154'])
+  })
+
+  it('should use the shell from the rc file', async () => {
+    const rootPath = fs.mkdtempSync(path.join(os.tmpdir(), 'bash-language-server-rc-'))
+    try {
+      fs.writeFileSync(path.join(rootPath, '.shellcheckrc'), 'shell=sh\n')
+      const document = TextDocument.create(
+        `file://${rootPath}/script`,
+        'bash',
+        0,
+        'echo "$RANDOM"\n',
+      )
+
+      const [result] = await getLintingResult({ document })
+      expect(result?.diagnostics.map(({ code }) => code)).toEqual(['SC3028'])
+
+      const [resultWithoutRc] = await getLintingResult({
+        additionalShellCheckArguments: ['--norc'],
+        document,
+      })
+      expect(resultWithoutRc?.diagnostics).toEqual([])
+    } finally {
+      fs.rmSync(rootPath, { recursive: true, force: true })
+    }
   })
 
   it('should resolve relative source paths against the configured cwd', async () => {
