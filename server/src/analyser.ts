@@ -345,13 +345,16 @@ export default class Analyzer {
     uri: string
     word: string
   }): LSP.Location[] {
-    // If the word is sourced, return the location of the source file
-    const sourcedUri = this.uriToAnalyzedDocument[uri]?.sourceCommands
+    // If the word is sourced, return the locations of the source files
+    const sourcedUris = (this.uriToAnalyzedDocument[uri]?.sourceCommands ?? [])
       .filter((sourceCommand) => isPositionIncludedInRange(position, sourceCommand.range))
-      .map((sourceCommand) => sourceCommand.uri)[0]
+      .map((sourceCommand) => sourceCommand.uri)
+      .filter((sourcedUri): sourcedUri is string => sourcedUri !== null)
 
-    if (sourcedUri) {
-      return [LSP.Location.create(sourcedUri, LSP.Range.create(0, 0, 0, 0))]
+    if (sourcedUris.length > 0) {
+      return sourcedUris.map((sourcedUri) =>
+        LSP.Location.create(sourcedUri, LSP.Range.create(0, 0, 0, 0)),
+      )
     }
 
     return this.findDeclarationsMatchingWord({

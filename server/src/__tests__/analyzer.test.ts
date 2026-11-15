@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { pathToFileURL } from 'node:url'
 
 import { Parser } from 'web-tree-sitter'
+import { TextDocument } from 'vscode-languageserver-textdocument'
 
 import {
   FIXTURE_DOCUMENT,
@@ -228,6 +229,27 @@ describe('findDeclarationLocations', () => {
         },
       ]
     `)
+  })
+
+  it('returns a location for each file matched by a glob source directive', async () => {
+    const analyzer = await getAnalyzer({})
+    const uri = `file://${FIXTURE_FOLDER}glob-source.sh`
+    const document = TextDocument.create(
+      uri,
+      'shellscript',
+      0,
+      '# shellcheck source=SCRIPTDIR/issue*.sh\nsource "$f"\n',
+    )
+    analyzer.analyze({ uri, document })
+    const result = analyzer.findDeclarationLocations({
+      uri,
+      word: '"$f"',
+      position: { character: 9, line: 1 },
+    })
+    expect(result.map(({ uri }) => uri)).toEqual([
+      `file://${FIXTURE_FOLDER}issue101.sh`,
+      `file://${FIXTURE_FOLDER}issue206.sh`,
+    ])
   })
 
   it('returns a location to a file if word is the path in a sourcing statement (resolved by using the workspacePath)', async () => {

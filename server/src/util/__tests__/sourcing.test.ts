@@ -1,8 +1,9 @@
-import { beforeAll, describe, expect, it, vi } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { pathToFileURL } from 'node:url'
 
 import * as fs from 'fs'
 import * as os from 'os'
+import * as path from 'path'
 import { Parser } from 'web-tree-sitter'
 
 import { FIXTURE_FOLDER, REPO_ROOT_FOLDER } from '../../../../testing/fixtures'
@@ -398,5 +399,94 @@ describe('getSourcedUris', () => {
     })
 
     expect(sourceCommands).toEqual([])
+  })
+
+  describe('glob source directives', () => {
+    let rootPath: string
+    const libUri = (name: string) =>
+      pathToFileURL(path.join(rootPath, 'lib.d', name)).href
+
+    beforeAll(() => {
+      rootPath = fs.mkdtempSync(path.join(os.tmpdir(), 'bash-language-server-sourcing-'))
+      fs.mkdirSync(path.join(rootPath, 'lib.d'))
+      for (const name of ['b.sh', 'a.sh', '.hidden.sh', 'c.txt']) {
+        fs.writeFileSync(path.join(rootPath, 'lib.d', name), '')
+      }
+    })
+
+    afterAll(() => {
+      fs.rmSync(rootPath, { recursive: true, force: true })
+    })
+
+    it('includes all matching files for a source command in a loop', () => {
+      vi.restoreAllMocks()
+
+      const sourceCommands = getSourceCommands({
+        fileUri: pathToFileURL(path.join(rootPath, 'main.sh')).href,
+        rootPath: null,
+        tree: parser.parse(
+          'for f in "$dir"/*.sh; do\n  # shellcheck source=SCRIPTDIR/lib.d/*.sh\n  source "$f"\ndone',
+        )!,
+      })
+
+      expect(sourceCommands.map(({ uri, error }) => ({ uri, error }))).toEqual([
+        { uri: libUri('a.sh'), error: null },
+        { uri: libUri('b.sh'), error: null },
+      ])
+      expect(sourceCommands[0].range).toEqual(sourceCommands[1].range)
+    })
+
+    it('resolves a relative glob against the workspace', () => {
+      vi.restoreAllMocks()
+
+      const sourceCommands = getSourceCommands({
+        fileUri: 'file:///elsewhere/main.sh',
+        rootPath,
+        tree: parser.parse('# shellcheck source=lib.d/*.sh\nsource "$f"')!,
+      })
+
+      expect(sourceCommands.map(({ uri }) => uri)).toEqual([
+        libUri('a.sh'),
+        libUri('b.sh'),
+      ])
+    })
+
+    it('leaves out the analyzed file', () => {
+      vi.restoreAllMocks()
+
+      const sourceCommands = getSourceCommands({
+        fileUri: libUri('a.sh'),
+        rootPath: null,
+        tree: parser.parse('# shellcheck source=SCRIPTDIR/*.sh\nsource "$f"')!,
+      })
+
+      expect(sourceCommands.map(({ uri }) => uri)).toEqual([libUri('b.sh')])
+    })
+
+    it('reports a glob without matches', () => {
+      vi.restoreAllMocks()
+
+      const sourceCommands = getSourceCommands({
+        fileUri: pathToFileURL(path.join(rootPath, 'main.sh')).href,
+        rootPath: null,
+        tree: parser.parse('# shellcheck source=SCRIPTDIR/none/*.sh\nsource "$f"')!,
+      })
+
+      expect(sourceCommands.map(({ uri, error }) => ({ uri, error }))).toEqual([
+        { uri: null, error: 'no files match glob' },
+      ])
+    })
+
+    it('does not expand a glob in the source command itself', () => {
+      vi.restoreAllMocks()
+
+      const sourceCommands = getSourceCommands({
+        fileUri: 'file:///elsewhere/main.sh',
+        rootPath,
+        tree: parser.parse('source "lib.d/*.sh"')!,
+      })
+
+      expect(sourceCommands.map(({ uri }) => uri)).toEqual([null])
+    })
   })
 })

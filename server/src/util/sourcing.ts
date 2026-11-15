@@ -1,5 +1,6 @@
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
+import * as fastGlob from 'fast-glob'
 import * as fs from 'fs'
 import * as path from 'path'
 import * as LSP from 'vscode-languageserver'
@@ -59,13 +60,28 @@ export function getSourceCommands({
     })
 
     if (sourcedPathInfo) {
-      const { sourcedPath, parseError } = sourcedPathInfo
+      const { sourcedPath, parseError, isDirective } = sourcedPathInfo
+      const range = TreeSitterUtil.range(node)
+
+      // Like ShellCheck, only expand globs from directives: the shell would
+      // source just the first match of a glob in the command itself
+      if (sourcedPath && isDirective && isGlob(sourcedPath)) {
+        const uris = resolveSourcedGlob({ rootPaths, pattern: sourcedPath, filePath })
+        if (uris.length === 0) {
+          sourceCommands.push({ range, uri: null, error: 'no files match glob' })
+        }
+        for (const uri of uris) {
+          sourceCommands.push({ range, uri, error: null })
+        }
+        return true
+      }
+
       const uri = sourcedPath
         ? resolveSourcedUri({ rootPaths, sourcedPath, isBatsFile })
         : null
 
       sourceCommands.push({
-        range: TreeSitterUtil.range(node),
+        range,
         uri,
         error: uri ? null : parseError || 'failed to resolve path',
       })
@@ -85,7 +101,7 @@ function getSourcedPathInfoFromNode({
   node: SyntaxNode
   isBatsFile: boolean
   scriptDirectory: string
-}): null | { sourcedPath?: string; parseError?: string } {
+}): null | { sourcedPath?: string; parseError?: string; isDirective?: boolean } {
   const sourcingCommands = isBatsFile
     ? [...SOURCING_COMMANDS, ...BATS_SOURCING_COMMANDS]
     : SOURCING_COMMANDS
@@ -127,6 +143,7 @@ function getSourcedPathInfoFromNode({
         if (sourcedPath) {
           return {
             sourcedPath: expandScriptDirectory(sourcedPath, scriptDirectory),
+            isDirective: true,
           }
         }
 
@@ -262,6 +279,53 @@ function resolveSourcedUri({
   }
 
   return null
+}
+
+function isGlob(sourcedPath: string): boolean {
+  return /[*?[]/.test(sourcedPath)
+}
+
+/**
+ * Expands a glob from a ShellCheck source directive and returns the URIs of
+ * the matching files in sorted order, using the first root path with matches.
+ * The analyzed file itself is left out.
+ */
+function resolveSourcedGlob({
+  rootPaths,
+  pattern,
+  filePath,
+}: {
+  rootPaths: string[]
+  pattern: string
+  filePath: string
+}): string[] {
+  if (pattern.startsWith('~')) {
+    pattern = untildify(pattern)
+  }
+
+  // Search from the directory before the first glob segment, so that the
+  // static part of the path is never interpreted as a glob
+  const segments = pattern.split('/')
+  const firstGlob = segments.findIndex(isGlob)
+  const directory = segments.slice(0, firstGlob).join('/')
+  const glob = segments.slice(firstGlob).join('/')
+  const searchDirectories = path.isAbsolute(pattern)
+    ? [directory || path.sep]
+    : rootPaths.map((rootPath) => path.join(rootPath, directory))
+
+  for (const cwd of searchDirectories) {
+    const matches = fastGlob
+      .sync(glob, { cwd, absolute: true, onlyFiles: true, dot: false })
+      .map((match) => path.normalize(match))
+      .sort()
+    if (matches.length > 0) {
+      return matches
+        .filter((match) => match !== path.normalize(filePath))
+        .map((match) => pathToFileURL(match).href)
+    }
+  }
+
+  return []
 }
 
 /*
